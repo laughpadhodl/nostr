@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>My Nostr Profile</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            line-height: 1.6;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            color: #333;
+        }
+        .profile {
+            border-radius: 10px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+            padding: 20px;
+            margin-top: 20px;
+        }
+        .profile-header {
+            display: flex;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+        .profile-picture {
+            width: 100px;
+            height: 100px;
+            border-radius: 50%;
+            object-fit: cover;
+            margin-right: 20px;
+        }
+        .loading {
+            text-align: center;
+            padding: 50px;
+            font-size: 18px;
+            color: #666;
+        }
+        .error {
+            color: #d32f2f;
+            padding: 20px;
+            border: 1px solid #d32f2f;
+            border-radius: 5px;
+            margin: 20px 0;
+        }
+        .event-list {
+            margin-top: 30px;
+        }
+        .event {
+            padding: 15px;
+            border-bottom: 1px solid #eee;
+        }
+    </style>
+</head>
+<body>
+    <h1>My Nostr Profile</h1>
+    <div id="profile-container" class="loading">Loading profile data...</div>
+
+    <script>
+        // Replace with your Nostr public key (npub or hex)
+        const MY_NOSTR_PUBKEY = 'npub1h74w3w3hatpm8n7ctk6kj96elcstphtkye3a52vyhrtnkce8tamq3p6730';
+        
+        // List of relays to connect to
+        const RELAYS = [
+            'wss://relay.damus.io',
+            'wss://nostr.fmt.wiz.biz',
+            'wss://relay.nostr.band',
+            'wss://nos.lol'
+        ];
+
+        // Convert npub to hex if needed
+        function getNormalizedPubkey(pubkey) {
+            if (pubkey.startsWith('npub')) {
+                // This is a simplified approach - in production you would use a proper bech32 decoder
+                // Consider using nostr-tools or another library for this
+                console.log('Please replace your npub with hex format');
+                return pubkey;
+            }
+            return pubkey;
+        }
+
+        // Connect to relays and fetch profile data
+        async function fetchNostrProfile() {
+            const profileContainer = document.getElementById('profile-container');
+            
+            try {
+                // Try to create WebSocket connections to relays
+                const connections = RELAYS.map(relay => {
+                    return new Promise((resolve) => {
+                        const ws = new WebSocket(relay);
+                        
+                        ws.onopen = () => {
+                            // Request the metadata (kind 0) event for the public key
+                            const requestId = 'profile-' + Math.random().toString().substring(2);
+                            const request = JSON.stringify([
+                                "REQ", 
+                                requestId,
+                                {
+                                    "kinds": [0],
+                                    "authors": [getNormalizedPubkey(MY_NOSTR_PUBKEY)]
+                                }
+                            ]);
+                            
+                            ws.send(request);
+                            resolve(ws);
+                        };
+                        
+                        ws.onerror = () => {
+                            resolve(null); // Connection failed
+                        };
+                    });
+                });
+                
+                // Wait for connections to be established
+                const sockets = await Promise.all(connections);
+                const activeSockets = sockets.filter(s => s !== null);
+                
+                if (activeSockets.length === 0) {
+                    profileContainer.innerHTML = '<div class="error">Failed to connect to any relays</div>';
+                    return;
+                }
+                
+                // Process incoming messages from relays
+                let profileData = null;
+                let gotProfile = false;
+                
+                activeSockets.forEach(ws => {
+                    ws.onmessage = (event) => {
+                        const message = JSON.parse(event.data);
+                        
+                        // Check if this is an EVENT message
+                        if (message[0] === "EVENT" && message[2].kind === 0) {
+                            const content = JSON.parse(message[2].content);
+                            profileData = content;
+                            gotProfile = true;
+                            renderProfile(profileData);
+                            
+                            // Close connections once we have the profile
+                            activeSockets.forEach(socket => socket.close());
+                        }
+                    };
+                });
+                
+                // Set a timeout in case we don't get a response
+                setTimeout(() => {
+                    if (!gotProfile) {
+                        profileContainer.innerHTML = '<div class="error">Could not find profile data. Please check your public key.</div>';
+                        activeSockets.forEach(socket => socket.close());
+                    }
+                }, 5000);
+                
+            } catch (error) {
+                profileContainer.innerHTML = `<div class="error">Error: ${error.message}</div>`;
+            }
+        }
+
+        // Render the profile data
+        function renderProfile(profile) {
+            const container = document.getElementById('profile-container');
+            
+            if (!profile) {
+                container.innerHTML = '<div class="error">No profile data found</div>';
+                return;
+            }
+            
+            container.className = 'profile';
+            
+            let html = `
+                <div class="profile-header">
+                    ${profile.picture ? `<img src="${profile.picture}" alt="${profile.name || 'Profile'}" class="profile-picture">` : ''}
+                    <div>
+                        <h2>${profile.name || 'Anonymous'}</h2>
+                        ${profile.display_name ? `<h3>${profile.display_name}</h3>` : ''}
+                    </div>
+                </div>
+                
+                ${profile.about ? `<p>${profile.about}</p>` : ''}
+                
+                <div class="profile-meta">
+                    ${profile.website ? `<p><strong>Website:</strong> <a href="${profile.website}" target="_blank">${profile.website}</a></p>` : ''}
+                    ${profile.nip05 ? `<p><strong>NIP-05:</strong> ${profile.nip05}</p>` : ''}
+                </div>
+            `;
+            
+            container.innerHTML = html;
+            
+            // Optionally fetch recent notes
+            // fetchRecentNotes();
+        }
+
+        // Initialize on page load
+        window.addEventListener('DOMContentLoaded', fetchNostrProfile);
+    </script>
+</body>
+</html>
